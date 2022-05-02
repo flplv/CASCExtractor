@@ -1,14 +1,16 @@
 project(CASCEXTRACTOR)
 cmake_minimum_required(VERSION 2.6)
 
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CASCEXTRACTOR_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CASCEXTRACTOR_BINARY_DIR}/lib")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CASCEXTRACTOR_BINARY_DIR}/bin")
 
 
+
 if (NOT EXISTS "${CASCEXTRACTOR_SOURCE_DIR}/CascLib/CMakeLists.txt")
     message(FATAL_ERROR
-"Missing dependency: CascLib
+    "Missing dependency: CascLib
 CASCExtractor requires the CascLib library.
 It is provided as a GIT submodule of this repository.
 Did you forgot to execute the following commands?
@@ -23,8 +25,12 @@ include_directories("${CASCEXTRACTOR_SOURCE_DIR}/CascLib/src/"
                     "${CASCEXTRACTOR_SOURCE_DIR}/include/"
 )
 
+find_package(Threads REQUIRED)
+
 add_executable(CASCExtractor main.cpp)
-target_link_libraries(CASCExtractor casc)
+target_link_libraries(CASCExtractor casc Threads::Threads)
+set_property(TARGET casc PROPERTY CXX_STANDARD 17)
+
 
 # Set the RPATH
 if (APPLE)

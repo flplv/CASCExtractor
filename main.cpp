@@ -9,7 +9,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <thread>
+#include <future>
 
+unsigned int nthreads = std::thread::hardware_concurrency();
 
 using namespace std;
 
@@ -213,90 +216,104 @@ int main(int argc, char** argv)
     // Extraction
     if (!searchResults.empty())
     {
-        char buffer[1000000];
-
-        cout << endl;
-        cout << "Extracting files..." << endl;
-        cout << endl;
-
         if (strDestination.at(strDestination.size() - 1) != '/')
             strDestination += "/";
 
-        vector<tSearchResult>::iterator iter, iterEnd;
-        for (iter = searchResults.begin(), iterEnd = searchResults.end(); iter != iterEnd; ++iter)
-        {
-            string strDestName = strDestination;
-
-            if (bUseFullPath)
+        auto workFunction = [strDestination, bUseFullPath, bLowerCase, hStorage](vector<tSearchResult>::iterator iter, vector<tSearchResult>::iterator iterEnd){
+            char buffer[1000000];
+            
+            for (; iter != iterEnd; ++iter)
             {
-                if (bLowerCase){
-                    transform(iter->strFullPath.begin(), iter->strFullPath.end(), iter->strFullPath.begin(), ::tolower);
-                }
+                string strDestName = strDestination;
 
-                strDestName += iter->strFullPath;
-
-                size_t offset = strDestName.find("\\");
-                while (offset != string::npos)
+                if (bUseFullPath)
                 {
-                    strDestName = strDestName.substr(0, offset) + "/" + strDestName.substr(offset + 1);
-                    offset = strDestName.find("\\");
-                }
+                    if (bLowerCase){
+                        transform(iter->strFullPath.begin(), iter->strFullPath.end(), iter->strFullPath.begin(), ::tolower);
+                    }
 
-                offset = strDestName.find_last_of("/");
-                if (offset != string::npos)
-                {
-                    string dest = strDestName.substr(0, offset + 1);
+                    strDestName += iter->strFullPath;
 
-                    size_t start = dest.find("/", 0);
-                    while (start != string::npos)
+                    size_t offset = strDestName.find("\\");
+                    while (offset != string::npos)
                     {
-                        string dirname = dest.substr(0, start);
+                        strDestName = strDestName.substr(0, offset) + "/" + strDestName.substr(offset + 1);
+                        offset = strDestName.find("\\");
+                    }
 
-                        DIR* d = opendir(dirname.c_str());
-                        if (!d)
-                            mkdir(dirname.c_str(), S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
-                        else
-                            closedir(d);
+                    offset = strDestName.find_last_of("/");
+                    if (offset != string::npos)
+                    {
+                        string dest = strDestName.substr(0, offset + 1);
 
-                        start = dest.find("/", start + 1);
+                        size_t start = dest.find("/", 0);
+                        while (start != string::npos)
+                        {
+                            string dirname = dest.substr(0, start);
+
+                            DIR* d = opendir(dirname.c_str());
+                            if (!d)
+                                mkdir(dirname.c_str(), S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+                            else
+                                closedir(d);
+
+                            start = dest.find("/", start + 1);
+                        }
                     }
                 }
-            }
-            else
-            {
-                if (bLowerCase){
-                    transform(iter->strFileName.begin(), iter->strFileName.end(), iter->strFileName.begin(), ::tolower);
+                else
+                {
+                    if (bLowerCase){
+                        transform(iter->strFileName.begin(), iter->strFileName.end(), iter->strFileName.begin(), ::tolower);
+                    }
+
+                    strDestName += iter->strFileName;
                 }
 
-                strDestName += iter->strFileName;
-            }
-
-            HANDLE hFile;
-            if (CascOpenFile(hStorage, iter->strFullPath.c_str(), CASC_LOCALE_ALL, 0, &hFile))
-            {
-                DWORD read;
-                FILE* dest = fopen(strDestName.c_str(), "wb");
-                if (dest)
+                HANDLE hFile;
+                if (CascOpenFile(hStorage, iter->strFullPath.c_str(), CASC_LOCALE_ALL, 0, &hFile))
                 {
-                    do {
-                        if (CascReadFile(hFile, &buffer, 1000000, &read))
-                            fwrite(&buffer, read, 1, dest);
-                    } while (read > 0);
+                    DWORD read;
+                    FILE* dest = fopen(strDestName.c_str(), "wb");
+                    if (dest)
+                    {
+                        do {
+                            if (CascReadFile(hFile, &buffer, 1000000, &read))
+                                fwrite(&buffer, read, 1, dest);
+                        } while (read > 0);
 
-                    fclose(dest);
+                        fclose(dest);
+                    }
+                    else
+                    {
+                        cerr << "Failed to extract the file '" << iter->strFullPath << "' in " << strDestName << endl;
+                    }
+
+                    CascCloseFile(hFile);
                 }
                 else
                 {
                     cerr << "Failed to extract the file '" << iter->strFullPath << "' in " << strDestName << endl;
                 }
+            }
+        };
 
-                CascCloseFile(hFile);
-            }
-            else
-            {
-                cerr << "Failed to extract the file '" << iter->strFullPath << "' in " << strDestName << endl;
-            }
-        }
+        cout << endl;
+        cout << "Extracting files using " << nthreads << " threads..." << endl;
+        cout << endl;
+
+        vector<future<void>> futures(nthreads);
+        int div = (searchResults.size() + nthreads) / nthreads; 
+        int n = 0;
+        generate(futures.begin(), futures.end(), [&](){
+            auto b = min(searchResults.end(), searchResults.begin() + n);
+            auto e = min(searchResults.end(), b + div);
+            n += div;
+            return async(workFunction, b, e);
+        });
+
+        for (auto& f : futures)
+            f.wait();
     }
 
     CascCloseStorage(hStorage);
